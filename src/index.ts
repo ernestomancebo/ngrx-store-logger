@@ -20,7 +20,7 @@ const getLogLevel = (level, action, payload, type) => {
 };
 
 const printBuffer = options => logBuffer => {
-    const {actionTransformer, collapsed, colors, timestamp, duration, level} = options;
+    const { actionTransformer, collapsed, colors, timestamp, duration, level } = options;
     logBuffer.forEach((logEntry, key) => {
         const { started, startedTime, action, error } = logEntry;
         const prevState = logEntry.prevState.nextState ? logEntry.prevState.nextState : '(Empty)';
@@ -94,7 +94,7 @@ const isAllowed = (action, filter) => {
     return filter.blacklist && filter.blacklist.indexOf(action.type) === -1;
 };
 
-export const storeLogger = (opts: LoggerOptions = {}) => (reducer: Function) => {
+export const storeLogger = (opts: LoggerOptions = {}, logPoster?: LogPoster) => (reducer: Function) => {
     let log = {};
     const ua = typeof window !== 'undefined' && window.navigator.userAgent ? window.navigator.userAgent : '';
     let ms_ie = false;
@@ -137,14 +137,19 @@ export const storeLogger = (opts: LoggerOptions = {}) => (reducer: Function) => 
             whitelist: [],
             blacklist: []
         },
-        colors: colors
+        colors: colors,
+        posterOptions: {
+            whitelist: [],
+            blacklist: [],
+            level: 'error'
+        }
     };
 
     const options = Object.assign({}, defaults, opts);
-    const {stateTransformer} = options;
+    const { stateTransformer } = options;
     const buffer = printBuffer(options);
 
-    return function(state, action) {
+    return function (state, action) {
         let preLog = {
             started: timer.now(),
             startedTime: new Date(),
@@ -160,7 +165,7 @@ export const storeLogger = (opts: LoggerOptions = {}) => (reducer: Function) => 
         };
         log = Object.assign({}, preLog, postLog);
         //ignore init action fired by store and devtools
-        if(action.type !== INIT_ACTION && isAllowed(action, options.filter)) {
+        if (action.type !== INIT_ACTION && isAllowed(action, options.filter)) {
             buffer([log]);
         }
 
@@ -195,6 +200,10 @@ export interface LoggerOptions {
      */
     actionTransformer?: (actn: Object) => Object;
     colors?: LoggerColorsOption;
+    /**
+     * Defines the criteria of which action post
+     */
+     posterOptions?: LogPosterOptions;
 };
 
 export interface LoggerFilterOption {
@@ -208,10 +217,63 @@ export interface LoggerFilterOption {
     blacklist?: string[];
 }
 
+export interface LogPosterOptions {
+    /**
+     * Only post actions included in this list - has priority over blacklist
+     */
+    whitelist?: string[];
+    /**
+     * Only post actions that are NOT included in this list
+     */
+    blacklist?: string[];
+    /**
+     * Define which level of log send. Defafult: 'error'
+     */
+    level?: any;
+}
+
 export interface LoggerColorsOption {
     title: (action: Object) => string;
     prevState: (prevState: Object) => string;
     action: (action: Object) => string;
     nextState: (nextState: Object) => string;
     error: (error: any, prevState: Object) => string;
+}
+
+export abstract class LogPoster {
+    /**
+     * Implement this function to define how the logs are posted to your server.
+     * Applies for every log level. If you're interested in use a different way to post on different logging levels(info, warning or error), please override accordingly.
+     * 
+     * @param prevState The previous state
+     * @param nextState The next state
+     */
+    abstract postLog(prevState, nextState): void;
+
+    /**
+     * Override this method if a different implementation in order to post to server is needed.
+     * @param prevState 
+     * @param nextState 
+     */
+    postInfo(prevState, nextState): void {
+        this.postLog(prevState, nextState);
+    }
+
+    /**
+     * Override this method if a different implementation in order to post to server is needed.
+     * @param prevState 
+     * @param nextState 
+     */
+    postWarn(prevState, nextState): void {
+        this.postLog(prevState, nextState);
+    }
+
+    /**
+     * Override this method if a different implementation in order to post to server is needed.
+     * @param prevState 
+     * @param nextState 
+     */
+    postError(prevState, nextState): void {
+        this.postLog(prevState, nextState);
+    }
 }
