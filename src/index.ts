@@ -20,7 +20,7 @@ const getLogLevel = (level, action, payload, type) => {
 };
 
 const printBuffer = options => logBuffer => {
-    const { actionTransformer, collapsed, colors, timestamp, duration, level } = options;
+    const { actionTransformer, collapsed, colors, timestamp, duration, level, posterOptions } = options;
     logBuffer.forEach((logEntry, key) => {
         const { started, startedTime, action, error } = logEntry;
         const prevState = logEntry.prevState.nextState ? logEntry.prevState.nextState : '(Empty)';
@@ -55,28 +55,47 @@ const printBuffer = options => logBuffer => {
         const errorLevel = getLogLevel(level, formattedAction, [error, prevState], `error`);
         const nextStateLevel = getLogLevel(level, formattedAction, [nextState], `nextState`);
 
+        // Check if it's a action intended to post, then extract if the level is desired to be tracked.
+        const isActionPosteable = isAllowed(formattedAction, posterOptions);
+        let logToPost: ServerLogObject = isActionPosteable ? { error: undefined } : undefined;
+
+        const postPrevStateLevel = isActionPosteable && getLogLevel(posterOptions.level, formattedAction, [prevState], 'prevState');
+        const postActionLevel = isActionPosteable && getLogLevel(posterOptions.level, formattedAction, [formattedAction], 'action');
+        const postErrorLevel = isActionPosteable && getLogLevel(posterOptions.level, formattedAction, [error, prevState], 'error');
+        const postNextStateLevel = isActionPosteable && getLogLevel(posterOptions.level, formattedAction, [nextState], 'nextState');
+
         if (prevStateLevel) {
             if (colors.prevState) logger[prevStateLevel](`%c prev state`, `color: ${colors.prevState(prevState)}; font-weight: bold`, prevState);
             else logger[prevStateLevel](`prev state`, prevState);
+
+            if (postPrevStateLevel) logToPost.prevState = prevState;
         }
 
         if (actionLevel) {
             if (colors.action) logger[actionLevel](`%c action`, `color: ${colors.action(formattedAction)}; font-weight: bold`, formattedAction);
             else logger[actionLevel](`action`, formattedAction);
+
+            if (postActionLevel) logToPost.action = formattedAction;
         }
 
         if (error && errorLevel) {
             if (colors.error) logger[errorLevel](`%c error`, `color: ${colors.error(error, prevState)}; font-weight: bold`, error);
             else logger[errorLevel](`error`, error);
+
+            if (postErrorLevel) logToPost.error = error;
         }
 
         if (nextStateLevel) {
             if (colors.nextState) logger[nextStateLevel](`%c next state`, `color: ${colors.nextState(nextState)}; font-weight: bold`, nextState);
             else logger[nextStateLevel](`next state`, nextState);
+
+            if (postNextStateLevel) logToPost.nextState = nextState;
         }
 
         try {
             logger.groupEnd();
+
+            // Send to server
         } catch (e) {
             logger.log(`—— log end ——`);
         }
@@ -141,7 +160,12 @@ export const storeLogger = (opts: LoggerOptions = {}, logPoster?: LogPoster) => 
         posterOptions: {
             whitelist: [],
             blacklist: [],
-            level: 'error'
+            level: {
+                error: (payload) => payload,
+                prevState: (payload) => payload,
+                nextState: (payload) => payload,
+                action: (payload) => payload
+            }
         }
     };
 
@@ -229,8 +253,15 @@ export interface LogPosterOptions {
     /**
      * Define which level of log send. Defafult: 'error'
      */
-    level?: any;
+    level?: LogLevelObj;
 }
+
+export interface LogLevelObj {
+    error: (payload: any) => any;
+    prevState?: (payload: any) => any;
+    action?: (payload: any) => any;
+    nextState?: (payload: any) => any;
+};
 
 export interface LoggerColorsOption {
     title: (action: Object) => string;
@@ -238,6 +269,13 @@ export interface LoggerColorsOption {
     action: (action: Object) => string;
     nextState: (nextState: Object) => string;
     error: (error: any, prevState: Object) => string;
+}
+
+export interface ServerLogObject {
+    error;
+    action?;
+    prevState?;
+    nextState?;
 }
 
 export abstract class LogPoster {
@@ -248,15 +286,15 @@ export abstract class LogPoster {
      * @param prevState The previous state
      * @param nextState The next state
      */
-    abstract postLog(prevState, nextState): void;
+    abstract postLog(serverPostObj: ServerLogObject): void;
 
     /**
      * Override this method if a different implementation in order to post to server is needed.
      * @param prevState 
      * @param nextState 
      */
-    postInfo(prevState, nextState): void {
-        this.postLog(prevState, nextState);
+    postInfo(serverPostObj: ServerLogObject): void {
+        this.postLog(serverPostObj);
     }
 
     /**
@@ -264,8 +302,8 @@ export abstract class LogPoster {
      * @param prevState 
      * @param nextState 
      */
-    postWarn(prevState, nextState): void {
-        this.postLog(prevState, nextState);
+    postWarn(serverPostObj: ServerLogObject): void {
+        this.postLog(serverPostObj);
     }
 
     /**
@@ -273,7 +311,7 @@ export abstract class LogPoster {
      * @param prevState 
      * @param nextState 
      */
-    postError(prevState, nextState): void {
-        this.postLog(prevState, nextState);
+    postError(serverPostObj: ServerLogObject): void {
+        this.postLog(serverPostObj);
     }
 }
